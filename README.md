@@ -1,2 +1,87 @@
 # WHM-cPanel-Bruteforce-Monitoring
 This script is used to monitor the bruteforce root login attempts to the WHM / cPanel server.
+
+# WHM Bruteforce Monitor - Setup Guide
+
+This guide installs the WHM & cPanel Bruteforce Monitor script as a systemd service.
+
+Run all commands as root from the directory that contains:
+
+- whm_bruteforce_monitor.sh
+- whm_bruteforce_monitor.service
+
+------------------------------------------------------------
+1. Create the monitor directory, example :
+------------------------------------------------------------
+
+mkdir -p /var/lib/whm-bruteforce-monitoring
+
+------------------------------------------------------------
+2. Install the monitor script
+------------------------------------------------------------
+nano /var/lib/whm-bruteforce-monitoringwhm-bruteforce-monitor.sh
+copy and paste file contents on whm_bruteforce_monitor.sh 
+chmod +x /var/lib/whm-bruteforce-monitoringwhm-bruteforce-monitor.sh
+
+------------------------------------------------------------
+3. Install the systemd service
+------------------------------------------------------------
+nano /etc/systemd/system/whm_bruteforce_monitoring.service
+copy dan paste file content on whm_bruteforce_monitor.service
+
+------------------------------------------------------------
+4. Reload systemd and start the service
+------------------------------------------------------------
+
+systemctl daemon-reload
+systemctl enable whm_bruteforce_monitoring.service
+systemctl restart whm_bruteforce_monitoring.service
+
+------------------------------------------------------------
+5. Verify the service status
+------------------------------------------------------------
+
+systemctl status whm_bruteforce_monitoring.service
+
+------------------------------------------------------------
+6. Check recent service logs
+------------------------------------------------------------
+
+journalctl -u whm_bruteforce_monitoring.service --since "5 minutes ago" --no-pager
+
+------------------------------------------------------------
+7. Follow realtime service logs
+------------------------------------------------------------
+
+journalctl -u whm_bruteforce_monitoring.service -f
+
+------------------------------------------------------------
+8. Verify the active systemd unit
+------------------------------------------------------------
+
+systemctl cat whm_bruteforce_monitoring.service
+
+The StartLimitIntervalSec and StartLimitBurst directives must be under the
+[Unit] section, not under [Service].
+
+Expected service file:
+
+[Unit]
+Description=WHM Bruteforce Monitoring
+After=network.target
+After=csf.service
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /etc/monitor/whm-bruteforce-monitor.sh
+Restart=always
+RestartSec=5
+CPUQuota=20%
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target
+
+
