@@ -35,7 +35,7 @@ ALERT_COOLDOWN=1800
 BLOCK_REASON="WHM Bruteforce Attack"
 
 # IP whitelist (space separated, CIDR supported)
-WHITELIST_IPS="103.131.51.0/24 103.112.162.172"
+WHITELIST_IPS="1.2.3.0/24 113.111.11.110 31.2.4.11"
 
 # rate limit: max log lines processed per second
 # prevent overload during massive attacks
