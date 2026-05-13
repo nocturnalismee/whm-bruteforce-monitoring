@@ -1,7 +1,7 @@
 # WHM-cPanel-Bruteforce-Monitoring
 This script is used to monitor the bruteforce root login attempts to the WHM / cPanel server.
 
-# WHM Bruteforce Monitor - Setup Guide
+## Simple Setup Guide
 
 This guide installs the WHM & cPanel Bruteforce Monitor script as a systemd service.
 
