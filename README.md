@@ -55,33 +55,3 @@ journalctl -u whm_bruteforce_monitoring.service --since "5 minutes ago" --no-pag
 
 journalctl -u whm_bruteforce_monitoring.service -f
 
-------------------------------------------------------------
-8. Verify the active systemd unit
-------------------------------------------------------------
-
-systemctl cat whm_bruteforce_monitoring.service
-
-The StartLimitIntervalSec and StartLimitBurst directives must be under the
-[Unit] section, not under [Service].
-
-Expected service file:
-
-[Unit]
-Description=WHM Bruteforce Monitoring
-After=network.target
-After=csf.service
-StartLimitIntervalSec=60
-StartLimitBurst=10
-
-[Service]
-Type=simple
-ExecStart=/bin/bash /etc/monitor/whm-bruteforce-monitor.sh
-Restart=always
-RestartSec=5
-CPUQuota=20%
-MemoryMax=128M
-
-[Install]
-WantedBy=multi-user.target
-
-
