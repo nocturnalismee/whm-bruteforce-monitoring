@@ -1,19 +1,30 @@
 [Unit]
-Description=WHM Bruteforce Monitoring
-After=network.target
-After=csf.service
-StartLimitIntervalSec=60
-StartLimitBurst=10
+Description=WHM & cPanel Bruteforce Monitoring
+After=network.target csf.service
+Wants=csf.service
+
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
+ExecStartPre=/usr/bin/test -f /etc/monitor/whm-bruteforce-monitor.sh
 ExecStart=/bin/bash /etc/monitor/whm-bruteforce-monitor.sh
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=10
 
-# Batasi resource agar tidak overload server
 CPUQuota=20%
 MemoryMax=128M
+
+ProtectHome=true
+ProtectSystem=full
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/etc/monitor/bruteforce-log
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=whm-bruteforce-monitor
 
 [Install]
 WantedBy=multi-user.target
