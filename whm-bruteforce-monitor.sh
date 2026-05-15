@@ -5,37 +5,31 @@
 # Description: This script is used to monitor the bruteforce login attempts to the WHM / cPanel server.
 # It will block the IP addresses that have more than 3 or 5 failed login attempts within 300 seconds.
 # It will send a telegram alert to the admin if the IP address is blocked.
-# It will also send a telegram alert if the IP address is not blocked.
 # -----------------------------------------------------------------------------
-
-LOGFILE="/usr/local/cpanel/logs/login_log"
-
-BOT_TOKEN=""
-CHAT_ID=""
-
-# Message Thread ID for Telegram Forum/Topic Group
-# 
-THREAD_ID=""
-
 HOSTNAME=$(hostname)
+LOGFILE="/usr/local/cpanel/logs/login_log"
 
 # -----------------------------------------------------------------------------
 # CONFIG
 
+BOT_TOKEN=""
+CHAT_ID=""
+THREAD_ID="" # Message Thread ID for Telegram Forum/Topic Group (Opsional)
+
 # number of failed logins before blocking
-THRESHOLD=5
+THRESHOLD=3
 
 # count time window (seconds)
 WINDOW=300
 
 # cooldown telegram alert per IP
-ALERT_COOLDOWN=1800
+ALERT_COOLDOWN=240
 
 # Tag block CSF
-BLOCK_REASON="WHM Bruteforce Attack"
+BLOCK_REASON="WHM / cPanel Root Bruteforce Attack"
 
 # IP whitelist (space separated, CIDR supported)
-WHITELIST_IPS="1.2.3.0/24 113.111.11.110 31.2.4.11"
+WHITELIST_IPS="10.10.10.10 10.122.10.0/24"
 
 # rate limit: max log lines processed per second
 # prevent overload during massive attacks
@@ -44,9 +38,13 @@ MAX_LINES_PER_SEC=100
 # TTL cache whitelist & blocked (seconds)
 CACHE_TTL=3600
 
+# cleanup interval: how often to sweep stale files (seconds)
+# default 300 = every 5 minutes
+CLEANUP_INTERVAL=604800 # every 7 days
+
 # -----------------------------------------------------------------------------
 
-STATE_DIR="/tmp/whm_monitor"
+STATE_DIR="/etc/monitor/bruteforce-log" # CUSTOM OPTIONAL DIR
 COUNT_DIR="${STATE_DIR}/counts"
 ALERT_DIR="${STATE_DIR}/alerts"
 CACHE_DIR="${STATE_DIR}/cache"
@@ -170,15 +168,15 @@ is_whitelisted() {
 
     for WHITE in $WHITELIST_IPS; do
         if echo "$WHITE" | grep -q '/'; then
-            # CIDR check via python3
+            # CIDR check via python3 (using sys.argv to prevent injection)
             if python3 -c "
 import ipaddress, sys
 try:
-    result = ipaddress.ip_address('$IP') in ipaddress.ip_network('$WHITE', strict=False)
+    result = ipaddress.ip_address(sys.argv[1]) in ipaddress.ip_network(sys.argv[2], strict=False)
     sys.exit(0 if result else 1)
 except Exception:
     sys.exit(1)
-" 2>/dev/null; then
+" "$IP" "$WHITE" 2>/dev/null; then
                 # save to cache
                 write_cache_timestamp "$CACHE_FILE"
                 return 0
@@ -217,23 +215,46 @@ already_blocked() {
 }
 
 # -----------------------------------------------------------------------------
-# Delete files whose count exceeds WINDOW
+# Delete stale files across all state directories
 # called periodically from the main loop
-cleanup_stale_counts() {
+cleanup_stale_files() {
 
     local NOW_CLEAN
     NOW_CLEAN=$(date +%s)
-    local EXPIRE=$((NOW_CLEAN - WINDOW))
 
-    local COUNT_FILE
-    local FIRST_TIME
+    local FILE
+    local FILE_TIME
 
-    for COUNT_FILE in "$COUNT_DIR"/*; do
-        [ -f "$COUNT_FILE" ] || continue
-        FIRST_TIME=$(cut -d: -f1 "$COUNT_FILE" 2>/dev/null)
-        [ -z "$FIRST_TIME" ] && rm -f "$COUNT_FILE" && continue
-        if [ "$FIRST_TIME" -lt "$EXPIRE" ]; then
-            rm -f "$COUNT_FILE"
+    # --- cleanup counts/ (expire after WINDOW) ---
+    local EXPIRE_COUNTS=$((NOW_CLEAN - WINDOW))
+    for FILE in "$COUNT_DIR"/*; do
+        [ -f "$FILE" ] || continue
+        FILE_TIME=$(cut -d: -f1 "$FILE" 2>/dev/null)
+        [ -z "$FILE_TIME" ] && rm -f "$FILE" && continue
+        if [ "$FILE_TIME" -lt "$EXPIRE_COUNTS" ]; then
+            rm -f "$FILE"
+        fi
+    done
+
+    # --- cleanup alerts/ (expire after ALERT_COOLDOWN x3) ---
+    local EXPIRE_ALERTS=$((NOW_CLEAN - ALERT_COOLDOWN * 3))
+    for FILE in "$ALERT_DIR"/*; do
+        [ -f "$FILE" ] || continue
+        FILE_TIME=$(cat "$FILE" 2>/dev/null)
+        [ -z "$FILE_TIME" ] && rm -f "$FILE" && continue
+        if [ "$FILE_TIME" -lt "$EXPIRE_ALERTS" ]; then
+            rm -f "$FILE"
+        fi
+    done
+
+    # --- cleanup cache/ (expire after CACHE_TTL) ---
+    local EXPIRE_CACHE=$((NOW_CLEAN - CACHE_TTL))
+    for FILE in "$CACHE_DIR"/*; do
+        [ -f "$FILE" ] || continue
+        FILE_TIME=$(cat "$FILE" 2>/dev/null)
+        [ -z "$FILE_TIME" ] && rm -f "$FILE" && continue
+        if [ "$FILE_TIME" -lt "$EXPIRE_CACHE" ]; then
+            rm -f "$FILE"
         fi
     done
 }
@@ -320,7 +341,7 @@ process_attack() {
             # Extract timestamps from log lines for neater display
             LOG_TIME=$(echo "$LINE" | awk '{print $1, $2}' | tr -d '[]')
 
-            MESSAGE="🚨 <b>WHM and cPanel Bruteforce Detected</b>
+            MESSAGE="<b>WHM / cPanel Bruteforce Detected</b>
 ━━━━━━━━━━━━━━━━━━━━
 🖥 <b>Server</b>: <code>${HOSTNAME}</code>
 👤 <b>Target</b>: <code>root</code>
@@ -333,8 +354,10 @@ process_attack() {
             send_telegram "$MESSAGE"
         fi
 
-        # reset counter after threshold is processed
-        rm -f "$COUNT_FILE"
+        # reset counter only if block was successful
+        if [ "$BLOCK_STATUS" = "CSF AUTO BLOCKED" ]; then
+            rm -f "$COUNT_FILE"
+        fi
     fi
 }
 
@@ -350,16 +373,15 @@ WINDOW_START=$(date +%s)
 # periodic cleanup tracker
 LAST_CLEANUP=$(date +%s)
 
-tail -F "$LOGFILE" | while read -r LINE
+while read -r LINE
 do
 
     NOW_SEC=$(date +%s)
 
     # PERIODIC CLEANUP
-    # delete expired count files every 5 minutes
 
-    if [ $((NOW_SEC - LAST_CLEANUP)) -gt 300 ]; then
-        cleanup_stale_counts
+    if [ $((NOW_SEC - LAST_CLEANUP)) -gt "$CLEANUP_INTERVAL" ]; then
+        cleanup_stale_files
         LAST_CLEANUP=$NOW_SEC
     fi
 
@@ -387,4 +409,4 @@ do
 
     process_attack "$IP" "$LINE"
 
-done
+done < <(tail -F "$LOGFILE")
