@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# Author: https://github.com/nocturnalismee/whm-bruteforce-monitoring
 # -----------------------------------------------------------------------------
 # WHM / cPanel Bruteforce Monitoring service
 # Description: This script is used to monitor the bruteforce login attempts to the WHM / cPanel server.
@@ -26,11 +26,11 @@ WINDOW=300
 ALERT_COOLDOWN=1800
 
 # Tag block CSF (per service type)
-BLOCK_REASON_WHM="WHM Root Bruteforce Attack"
-BLOCK_REASON_CPANEL="cPanel Root Bruteforce Attack"
+BLOCK_REASON_WHM="wba : [whostmgrd] root \"POST /login/?login_only=1 HTTP/1.1\" FAILED LOGIN"
+BLOCK_REASON_CPANEL="wba : [cpaneld] root \"POST /login/?login_only=1 HTTP/1.1\" FAILED LOGIN"
 
 # IP whitelist (space separated, CIDR supported)
-WHITELIST_IPS="1.1.1.1 10.2.3.0/24"
+WHITELIST_IPS="11.1.1.1 11.1.2.0/24"
 
 # rate limit: max log lines processed per second
 # prevent overload during massive attacks
@@ -341,26 +341,31 @@ process_attack() {
             return
         fi
 
-        # skip if it has been blocked
-        if already_blocked "$IP"; then
-            return
-        fi
-
-        # block IP and make sure CSF is successful before cache
-        local BLOCK_STATUS="CSF AUTO BLOCKED ✅"
-        local BLOCK_SUCCESS=1
+        # determine block status
+        local BLOCK_STATUS=""
+        local BLOCK_SUCCESS=0
         local CSF_ERROR=""
 
-        local CSF_OUTPUT
-        CSF_OUTPUT=$(csf -d "$IP" "$BLOCK_REASON" 2>&1)
-        if [ $? -eq 0 ]; then
-            write_cache_timestamp "${CACHE_DIR}/blocked_${IP}"
-            echo "[INFO] IP blocked by CSF: ${IP} (${SERVICE_TYPE})"
+        if already_blocked "$IP"; then
+            BLOCK_STATUS="IP ALREADY BLOCKED IN CSF"
+            BLOCK_SUCCESS=1
+            echo "[INFO] IP already blocked in CSF: ${IP} (${SERVICE_TYPE})"
         else
-            BLOCK_STATUS="CSF BLOCK FAILED ❌"
-            BLOCK_SUCCESS=0
-            CSF_ERROR="$CSF_OUTPUT"
-            echo "[ERROR] Failed to block IP with CSF: ${IP} — ${CSF_OUTPUT}"
+            # block IP and make sure CSF is successful before cache
+            BLOCK_STATUS="IP BLOCKED BY CSF SUCCESSFULLY"
+            BLOCK_SUCCESS=1
+
+            local CSF_OUTPUT
+            CSF_OUTPUT=$(csf -d "$IP" "$BLOCK_REASON" 2>&1)
+            if [ $? -eq 0 ]; then
+                write_cache_timestamp "${CACHE_DIR}/blocked_${IP}"
+                echo "[INFO] IP blocked by CSF: ${IP} (${SERVICE_TYPE})"
+            else
+                BLOCK_STATUS="IP BLOCK FAILED"
+                BLOCK_SUCCESS=0
+                CSF_ERROR="$CSF_OUTPUT"
+                echo "[ERROR] Failed to block IP with CSF: ${IP} — ${CSF_OUTPUT}"
+            fi
         fi
 
         # cooldown alert
@@ -391,25 +396,25 @@ process_attack() {
             LOG_TIME=$(echo "$LINE" | awk '{print $1, $2}' | tr -d '[]')
 
             local MESSAGE="<b>${SERVICE_TYPE} Bruteforce Detected</b>
+<pre>
+Server   : ${SERVER_HOSTNAME}
+Target   : root
+Attacker : ${IP}
+Attempts : ${COUNT}x in ${WINDOW}s
+Time     : ${LOG_TIME}
 
-<b>Server:</b>  <code>${SERVER_HOSTNAME}</code>
-<b>Target:</b>  <code>root</code>
-<b>Attacker:</b>  <code>${IP}</code>
-<b>Attempts:</b>  <code>${COUNT}x</code> dalam <code>${WINDOW}s</code>
-<b>Time:</b>  <code>${LOG_TIME}</code>
-
-🔥  <b>Action:</b>  ${BLOCK_STATUS}"
+Action   : ${BLOCK_STATUS}
+</pre>"
 
             # append CSF error detail if block failed
             if [ -n "$CSF_ERROR" ]; then
-                MESSAGE+="
-⚠️  <b>Error:</b>  <code>${CSF_ERROR}</code>"
+                MESSAGE+="<pre>Error: ${CSF_ERROR}</pre>"
             fi
 
             send_telegram "$MESSAGE"
         fi
 
-        # reset counter only if block was successful
+        # reset counter if block was successful or already blocked
         if [ "$BLOCK_SUCCESS" -eq 1 ]; then
             rm -f "$COUNT_FILE"
         fi
