@@ -18,7 +18,7 @@ mkdir -p /var/lib/whm-bruteforce-monitoring
 ------------------------------------------------------------
 nano /var/lib/whm-bruteforce-monitoringwhm-bruteforce-monitor.sh
 copy and paste file contents on whm_bruteforce_monitor.sh 
-chmod +x /var/lib/whm-bruteforce-monitoringwhm-bruteforce-monitor.sh
+chmod +x /var/lib/whm-bruteforce-monitoring/whm-bruteforce-monitor.sh
 
 ------------------------------------------------------------
 3. Install the systemd service
